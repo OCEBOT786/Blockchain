@@ -1,0 +1,1 @@
+-- Database table definitions for users and metadata

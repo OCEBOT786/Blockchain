@@ -1,0 +1,42 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_20-e048d4748cef5ba955ae8afc4522751e9a060aa7",
+  "solcVersion": "0.8.20",
+  "solcLongVersion": "0.8.20+commit.a1b79de6",
+  "compilerType": "solc",
+  "userSourceNameMap": {
+    "contracts/SupplyChainOrder.sol": "project/contracts/SupplyChainOrder.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "shanghai",
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/SupplyChainOrder.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\ncontract SupplyChainOrder {\n    enum Status {\n        OrderReceived,\n        InTransit,\n        Delivered\n    }\n\n    struct Order {\n        uint256 orderId;\n        address customerAddress;\n        Status status;\n        uint256 timestamp;\n    }\n\n    address public owner;\n    uint256 public orderCount;\n\n    mapping(uint256 => Order) public orders;\n    mapping(address => bool) public authorizedOperators;\n\n    event OrderCreated(uint256 indexed orderId, address indexed customerAddress, uint256 timestamp);\n    event OrderStatusUpdated(uint256 indexed orderId, Status newStatus, uint256 timestamp);\n    event OperatorAuthorized(address indexed operator);\n\n    modifier onlyOwner() {\n        require(msg.sender == owner, \"Only owner can call this\");\n        _;\n    }\n\n    modifier onlyOperator() {\n        require(authorizedOperators[msg.sender], \"Not an authorized operator\");\n        _;\n    }\n\n    constructor() {\n        owner = msg.sender;\n    }\n\n    function authorizeOperator(address _operator) external onlyOwner {\n        require(_operator != address(0), \"Invalid operator address\");\n        authorizedOperators[_operator] = true;\n        emit OperatorAuthorized(_operator);\n    }\n\n    function createOrder(address _customer) external onlyOwner returns (uint256) {\n        require(_customer != address(0), \"Invalid customer address\");\n\n        orderCount++;\n        orders[orderCount] = Order({\n            orderId: orderCount,\n            customerAddress: _customer,\n            status: Status.OrderReceived,\n            timestamp: block.timestamp\n        });\n\n        emit OrderCreated(orderCount, _customer, block.timestamp);\n        return orderCount;\n    }\n\n    function updateOrderStatus(uint256 _orderId, Status _newStatus) external onlyOperator {\n        require(_orderId > 0 && _orderId <= orderCount, \"Order does not exist\");\n\n        orders[_orderId].status = _newStatus;\n        orders[_orderId].timestamp = block.timestamp;\n\n        emit OrderStatusUpdated(_orderId, _newStatus, block.timestamp);\n    }\n\n    function getOrder(uint256 _orderId) external view returns (\n        uint256 orderId,\n        address customerAddress,\n        Status status,\n        uint256 timestamp\n    ) {\n        require(_orderId > 0 && _orderId <= orderCount, \"Order does not exist\");\n        Order memory order = orders[_orderId];\n        return (order.orderId, order.customerAddress, order.status, order.timestamp);\n    }\n}\n"
+      }
+    }
+  }
+}
