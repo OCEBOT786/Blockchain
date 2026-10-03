@@ -16,12 +16,31 @@ if (loginError) {
   process.exit(1);
 }
 
+let orderQuery = supabase
+  .from('orders')
+  .select('id')
+  .eq('buyer_id', loginData.user.id)
+  .not('blockchain_order_id', 'is', null);
+
+if (process.env.TEST_ORDER_ID) {
+  orderQuery = orderQuery.eq('id', process.env.TEST_ORDER_ID);
+}
+
+const { data: targetOrder, error: lookupError } = await orderQuery
+  .order('created_at', { ascending: false })
+  .limit(1)
+  .single();
+
+if (lookupError) {
+  throw new Error(`Could not find a linked order: ${lookupError.message}`);
+}
+
 const { data, error } = await supabase
   .from('orders')
   .update({
     notes: `Realtime test ${new Date().toISOString()}`
   })
-  .eq('blockchain_order_id', 1)
+  .eq('id', targetOrder.id)
   .select()
   .single();
 

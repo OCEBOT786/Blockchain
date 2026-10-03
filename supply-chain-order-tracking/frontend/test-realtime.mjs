@@ -25,19 +25,28 @@ await supabase.realtime.setAuth(
 
 
 
-const { data: order, error: orderError } =
-  await supabase
-    .from('orders')
-    .select('*')
-    .eq('blockchain_order_id', 1)
-    .single();
+let orderQuery = supabase
+  .from('orders')
+  .select('id, notes')
+  .eq('buyer_id', loginData.user.id)
+  .not('blockchain_order_id', 'is', null);
+
+if (process.env.TEST_ORDER_ID) {
+  orderQuery = orderQuery.eq('id', process.env.TEST_ORDER_ID);
+}
+
+const { data: order, error: orderError } = await orderQuery
+  .order('created_at', { ascending: false })
+  .limit(1)
+  .single();
 
 if (orderError) {
-  console.error('Cannot read Order #1:', orderError);
+  console.error('Cannot read the linked order:', orderError);
   process.exit(1);
 }
 
-console.log('Order #1 is visible through RLS.');
+console.log('Order is visible through the authenticated query.');
+console.log('Order ID:', order.id);
 console.log('Current notes:', order.notes);
 
 
@@ -49,7 +58,7 @@ const channel = supabase
       event: 'UPDATE',
       schema: 'public',
       table: 'orders',
-      filter: 'blockchain_order_id=eq.1'
+      filter: `id=eq.${order.id}`
     },
     (payload) => {
       console.log('\nRealtime update received:');
@@ -60,7 +69,7 @@ const channel = supabase
     console.log('Realtime status:', status);
   });
 
-console.log('\nListening for Order #1 updates...');
+console.log('\nListening for this order\'s updates...');
 console.log('Leave this terminal running.');
 
 process.on('SIGINT', async () => {

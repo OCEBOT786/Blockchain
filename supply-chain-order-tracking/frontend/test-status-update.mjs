@@ -20,6 +20,7 @@ const contractAddress =
 const abi = [
   'function authorizeOperator(address _operator) external',
   'function authorizedOperators(address) external view returns (bool)',
+  'function orderCount() external view returns (uint256)',
   'function updateOrderStatus(uint256 _orderId, uint8 _newStatus) external',
   'function getOrder(uint256 _orderId) external view returns (uint256 orderId, address customerAddress, uint8 status, uint256 timestamp)'
 ];
@@ -65,7 +66,19 @@ if (!alreadyAuthorized) {
 }
 
 
-// update blockchain order #1
+const orderId = process.env.TEST_BLOCKCHAIN_ORDER_ID
+  ? BigInt(process.env.TEST_BLOCKCHAIN_ORDER_ID)
+  : await ownerContract.orderCount();
+
+if (orderId < 1n) {
+  throw new Error('No blockchain order exists to update.');
+}
+
+const before = await operatorContract.getOrder(orderId);
+console.log('Order ID:', orderId.toString());
+console.log('Status before update:', Number(before.status));
+
+// update the selected blockchain order
 
 // solidity enum:
 // 0 = OrderReceived
@@ -74,7 +87,7 @@ if (!alreadyAuthorized) {
 
 const updateTx =
   await operatorContract.updateOrderStatus(
-    1,
+    orderId,
     1
   );
 
@@ -91,7 +104,7 @@ console.log('Status update confirmed.');
 // verify blockchain record
 
 const order =
-  await operatorContract.getOrder(1);
+  await operatorContract.getOrder(orderId);
 
 console.log('\nBlockchain order after update:');
 
@@ -104,6 +117,8 @@ console.log({
 
 if (Number(order.status) === 1) {
   console.log(
-    '\nSuccess: Order #1 is now InTransit.'
+    '\nSuccess: the order is now InTransit.'
   );
+} else {
+  throw new Error('The blockchain status did not change to InTransit.');
 }

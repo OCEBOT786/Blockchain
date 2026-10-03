@@ -19,7 +19,30 @@ if (loginError) {
 
 console.log('Logged in as buyer:', loginData.user.email);
 
-// assign logistics provider to blockchain order #1
+if (!process.env.LOGISTICS_USER_ID) {
+  throw new Error('Set LOGISTICS_USER_ID before assigning an order.');
+}
+
+let orderQuery = supabase
+  .from('orders')
+  .select('id, blockchain_order_id')
+  .eq('buyer_id', loginData.user.id)
+  .not('blockchain_order_id', 'is', null);
+
+if (process.env.TEST_ORDER_ID) {
+  orderQuery = orderQuery.eq('id', process.env.TEST_ORDER_ID);
+}
+
+const { data: targetOrder, error: lookupError } = await orderQuery
+  .order('created_at', { ascending: false })
+  .limit(1)
+  .single();
+
+if (lookupError) {
+  throw new Error(`Could not find a linked order: ${lookupError.message}`);
+}
+
+// Assign this buyer's linked order.
 const { data: order, error: updateError } =
   await supabase
     .from('orders')
@@ -27,7 +50,7 @@ const { data: order, error: updateError } =
       logistics_provider_id:
         process.env.LOGISTICS_USER_ID
     })
-    .eq('blockchain_order_id', 1)
+    .eq('id', targetOrder.id)
     .select()
     .single();
 
@@ -38,4 +61,8 @@ if (updateError) {
 }
 
 console.log('\nLogistics provider assigned successfully:');
+if (order.logistics_provider_id !== process.env.LOGISTICS_USER_ID) {
+  throw new Error('The logistics assignment did not persist.');
+}
+
 console.log(order);

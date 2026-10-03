@@ -21,7 +21,6 @@ const contractAddress =
 
 const abi = [
   'function createOrder(address _customer) external returns (uint256)',
-  'function orderCount() external view returns (uint256)',
   'function getOrder(uint256 _orderId) external view returns (uint256 orderId, address customerAddress, uint8 status, uint256 timestamp)',
   'event OrderCreated(uint256 indexed orderId, address indexed customerAddress, uint256 timestamp)'
 ];
@@ -111,8 +110,41 @@ console.log('Transaction confirmed.');
 // get new blockchain order ID
 
 
-const blockchainOrderId =
-  await contract.orderCount();
+if (receipt.status !== 1) {
+  throw new Error('The blockchain transaction did not succeed.');
+}
+
+const createdEvent = receipt.logs
+  .filter((log) => log.address.toLowerCase() === contractAddress.toLowerCase())
+  .map((log) => {
+    try {
+      return contract.interface.parseLog(log);
+    } catch {
+      return null;
+    }
+  })
+  .find((event) => event?.name === 'OrderCreated');
+
+if (!createdEvent) {
+  throw new Error('The transaction did not emit OrderCreated.');
+}
+
+const blockchainOrderId = createdEvent.args.orderId;
+const numericOrderId = Number(blockchainOrderId);
+
+if (!Number.isSafeInteger(numericOrderId)) {
+  throw new Error('Blockchain order ID exceeds the safe JavaScript integer range.');
+}
+
+const blockchainOrder = await contract.getOrder(blockchainOrderId);
+
+if (
+  blockchainOrder.orderId !== blockchainOrderId ||
+  blockchainOrder.customerAddress.toLowerCase() !== profile.wallet_address.toLowerCase() ||
+  createdEvent.args.customerAddress.toLowerCase() !== profile.wallet_address.toLowerCase()
+) {
+  throw new Error('The blockchain order does not match the buyer profile.');
+}
 
 console.log(
   'Blockchain order ID:',
@@ -128,7 +160,7 @@ const { data: updatedOrder, error: updateError } =
     .from('orders')
     .update({
       blockchain_order_id:
-        Number(blockchainOrderId),
+        numericOrderId,
 
       blockchain_tx_hash:
         receipt.hash,
@@ -137,6 +169,8 @@ const { data: updatedOrder, error: updateError } =
         contractAddress
     })
     .eq('id', order.id)
+    .eq('buyer_id', user.id)
+    .is('blockchain_order_id', null)
     .select()
     .single();
 
@@ -146,15 +180,20 @@ if (updateError) {
   process.exit(1);
 }
 
+if (
+  BigInt(updatedOrder.blockchain_order_id) !== blockchainOrderId ||
+  updatedOrder.blockchain_tx_hash?.toLowerCase() !== receipt.hash.toLowerCase() ||
+  updatedOrder.contract_address?.toLowerCase() !== contractAddress.toLowerCase()
+) {
+  throw new Error('The saved Supabase link does not match the transaction.');
+}
+
 console.log('\nOrder linked successfully:');
 console.log(updatedOrder);
 
 
 // verify blockchain data
 
-
-const blockchainOrder =
-  await contract.getOrder(blockchainOrderId);
 
 console.log('\nBlockchain record:');
 console.log({
