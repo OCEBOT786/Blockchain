@@ -59,5 +59,15 @@ if (orderError) {
 }
 
 
+if (
+  !order?.id ||
+  order.buyer_id !== user.id ||
+  order.blockchain_order_id !== null ||
+  order.blockchain_tx_hash !== null ||
+  order.contract_address !== null
+) {
+  throw new Error('The new off-chain order has unexpected buyer or blockchain fields.');
+}
+
 console.log('\nOrder created successfully:');
 console.log(order);

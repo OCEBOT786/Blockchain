@@ -10,8 +10,13 @@ if (!supabaseUrl || !supabaseKey) {
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const email = 'spencerv179+logistics@gmail.com';
-const password = 'TestPassword123!';
+const email = process.env.LOGISTICS_TEST_EMAIL;
+const password = process.env.LOGISTICS_TEST_PASSWORD;
+
+if (!email || !password) {
+  console.error('Set LOGISTICS_TEST_EMAIL and LOGISTICS_TEST_PASSWORD before signing up.');
+  process.exit(1);
+}
 
 const { data, error } = await supabase.auth.signUp({
   email,
@@ -36,3 +41,22 @@ if (error) {
 console.log('Signup successful.');
 console.log('User ID:', data.user?.id);
 console.log('Email:', data.user?.email);
+
+if (!data.user?.id) {
+  throw new Error('Signup returned no user ID.');
+}
+
+if (!data.session) {
+  console.log('Confirm the email, then log in to check the profile.');
+} else {
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, role')
+    .eq('id', data.user.id)
+    .single();
+
+  if (profileError || profile?.role !== 'logistics_provider') {
+    throw new Error('Logistics profile was not created with the expected role.');
+  }
+  console.log('Logistics provider profile created automatically.');
+}

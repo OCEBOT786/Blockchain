@@ -38,5 +38,9 @@ if (profileError) {
   process.exit(1);
 }
 
+if (profile.role !== 'buyer') {
+  throw new Error('The buyer test account has an unexpected profile role.');
+}
+
 console.log('Profile retrieved successfully:');
 console.log(profile);
