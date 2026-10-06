@@ -1,17 +1,22 @@
-import hre from "hardhat";
+import { network } from "hardhat";
 
 async function main() {
-  const SupplyChainOrder = await hre.ethers.getContractFactory("SupplyChainOrder");
-  const supplyChainOrder = await SupplyChainOrder.deploy();
+  const { ethers } = await network.create();
 
-  if (supplyChainOrder.waitForDeployment) {
-    await supplyChainOrder.waitForDeployment();
-  } else {
-    await supplyChainOrder.deployed();
-  }
+  const SupplyChainOrder =
+    await ethers.getContractFactory("SupplyChainOrder");
 
-  const contractAddress = supplyChainOrder.target || supplyChainOrder.address;
-  console.log(`SupplyChainOrder deployed to: ${contractAddress}`);
+  const supplyChainOrder =
+    await SupplyChainOrder.deploy();
+
+  await supplyChainOrder.waitForDeployment();
+
+  const contractAddress =
+    await supplyChainOrder.getAddress();
+
+  console.log(
+    `SupplyChainOrder deployed to: ${contractAddress}`
+  );
 }
 
 main().catch((error) => {
