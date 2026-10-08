@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "./lib/supabase";
 import "./Tracker.css";
 
-// same mock data as the html version — will get replaced with real
-// supabase / backend calls once that's ready
+// same mock data as the html version — vendor portal + verify still run on
+// this until the backend / smart contract side is ready. real orders from
+// supabase get added on top of it (see loadRealOrders below)
 const initialOrders = {
   "SC-10492": {
     customer: "Alex Kim",
@@ -50,6 +52,42 @@ function getTime(order, status) {
   return entry ? formatTime(entry.time) : "";
 }
 
+// ---- supabase <-> tracker translation ----
+// the orders table doesn't have customer / origin / status columns, so:
+//  - customer + origin are saved in the "notes" column
+//  - destination is the "delivery_address" column
+//  - status isn't in the database (it'll come from the blockchain later),
+//    so a real order just shows "Order placed" for now
+// product_name and quantity are required by the database but the form
+// doesn't ask for them, so these placeholders are used until we decide what to do
+const PLACEHOLDER_PRODUCT = "General goods";
+const PLACEHOLDER_QUANTITY = 1;
+
+function displayId(uuid) {
+  return "SC-" + uuid.slice(0, 8).toUpperCase();
+}
+
+function notesFromForm(customer, origin) {
+  return "Customer: " + customer + "\nOrigin: " + origin;
+}
+
+function readNote(notes, key) {
+  const match = (notes || "").match(new RegExp("^" + key + ": (.*)$", "m"));
+  return match ? match[1] : "-";
+}
+
+function rowToOrder(row) {
+  return {
+    customer: readNote(row.notes, "Customer"),
+    origin: readNote(row.notes, "Origin"),
+    destination: row.delivery_address || "-",
+    status: "Order placed",
+    storedHash: "pending",
+    onchainHash: "pending",
+    history: [{ status: "Order placed", time: row.created_at }],
+  };
+}
+
 export default function Tracker() {
   // in the html/js version this stuff lived in global `var`s and got pushed
   // into the page by hand with document.getElementById(...).textContent = ...
@@ -78,6 +116,30 @@ export default function Tracker() {
   // verify tab
   const [verifyId, setVerifyId] = useState("SC-10492");
   const [verifyResult, setVerifyResult] = useState(null);
+
+  // load the logged-in user's real orders from supabase (newest first)
+  useEffect(() => {
+    let cancelled = false;
+
+    supabase
+      .from("orders")
+      .select("id, delivery_address, notes, created_at")
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled || error || !data || data.length === 0) return;
+
+        const real = {};
+        data.forEach((row) => {
+          real[displayId(row.id)] = rowToOrder(row);
+        });
+        setOrders((old) => ({ ...old, ...real }));
+        setCurrentOrderId(displayId(data[0].id));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const currentOrder = orders[currentOrderId];
 
@@ -114,24 +176,42 @@ export default function Tracker() {
     setVendorMsg("updated " + id + " to " + vendorStatus);
   }
 
-  function handlePlaceOrder() {
+  async function handlePlaceOrder() {
     if (!placeName.trim() || !placeOrigin.trim() || !placeDest.trim()) {
       setPlaceMsg("fill in all the fields first");
       return;
     }
 
-    const id = "SC-" + Math.floor(10000 + Math.random() * 90000);
-    const newOrder = {
-      customer: placeName.trim(),
-      origin: placeOrigin.trim(),
-      destination: placeDest.trim(),
-      status: "Order placed",
-      storedHash: "pending",
-      onchainHash: "pending",
-      history: [{ status: "Order placed", time: new Date().toISOString() }],
-    };
+    setPlaceMsg("placing order...");
 
-    setOrders({ ...orders, [id]: newOrder });
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+    if (!user) {
+      setPlaceMsg("you need to be logged in to place an order");
+      return;
+    }
+
+    // save it in supabase (the database makes the id + created_at itself)
+    const { data: row, error } = await supabase
+      .from("orders")
+      .insert({
+        buyer_id: user.id,
+        product_name: PLACEHOLDER_PRODUCT,
+        quantity: PLACEHOLDER_QUANTITY,
+        delivery_address: placeDest.trim(),
+        notes: notesFromForm(placeName.trim(), placeOrigin.trim()),
+      })
+      .select("id, delivery_address, notes, created_at")
+      .single();
+
+    if (error) {
+      // only accounts with the buyer role are allowed to insert orders
+      setPlaceMsg("couldn't place the order: " + error.message);
+      return;
+    }
+
+    const id = displayId(row.id);
+    setOrders((old) => ({ ...old, [id]: rowToOrder(row) }));
     setPlaceMsg("order placed, id is " + id);
     setPlaceName("");
     setPlaceOrigin("");
