@@ -1,0 +1,45 @@
+/* login / register page + the small signed-in bar.
+   the rest of the look (cards, inputs, buttons, tabs) is reused from Tracker.css */
+
+form.card {
+  text-align: left;
+}
+
+.infotext {
+  color: #0f6e56;
+  font-size: 12px;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+.btnmain:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.userbar {
+  /* floats at the very top so the tracker below keeps its exact position */
+  position: absolute;
+  top: 2px;
+  left: 0;
+  right: 0;
+  height: 22px;
+  padding: 0 24px;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #5b6472;
+  text-align: left;
+}
+
+.userbar .who {
+  color: #1c2431;
+  font-weight: bold;
+}
+
+.userbar .trackbtn {
+  padding: 2px 10px;
+  font-size: 12px;
+}
