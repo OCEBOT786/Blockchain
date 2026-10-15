@@ -34,6 +34,12 @@
       },
       {
         "indexed": false,
+        "internalType": "bytes32",
+        "name": "metadataHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
         "internalType": "uint256",
         "name": "timestamp",
         "type": "uint256"
@@ -105,6 +111,11 @@
         "internalType": "address",
         "name": "_customer",
         "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "_metadataHash",
+        "type": "bytes32"
       }
     ],
     "name": "createOrder",
@@ -147,6 +158,11 @@
         "internalType": "uint256",
         "name": "timestamp",
         "type": "uint256"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "metadataHash",
+        "type": "bytes32"
       }
     ],
     "stateMutability": "view",
@@ -155,6 +171,25 @@
   {
     "inputs": [],
     "name": "orderCount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "orderIdByMetadataHash",
     "outputs": [
       {
         "internalType": "uint256",
@@ -194,6 +229,11 @@
         "internalType": "uint256",
         "name": "timestamp",
         "type": "uint256"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "metadataHash",
+        "type": "bytes32"
       }
     ],
     "stateMutability": "view",

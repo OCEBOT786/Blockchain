@@ -1,11 +1,10 @@
-import "@nomicfoundation/hardhat-toolbox";
+import hardhatEthers from "@nomicfoundation/hardhat-ethers";
 
 export default {
+  plugins: [hardhatEthers],
   solidity: "0.8.20",
   networks: {
-    sepolia: {
-      url: "https://ethereum-sepolia-rpc.publicnode.com",
-      accounts: ["cccd852ea856387fc50ffb6ea442bcb7baeae5e8cef22aa5357c85eacdc1d82c"] 
-    }
-  }
+    hardhatMainnet: { type: "edr-simulated", chainType: "l1" },
+    localhost: { type: "http", chainType: "l1", url: process.env.LOCAL_RPC_URL || "http://127.0.0.1:8545", accounts: "remote" },
+  },
 };

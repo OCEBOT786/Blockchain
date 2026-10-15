@@ -3,13 +3,23 @@ node_modules/
 
 # Java build output
 backend/target/
+**/backend/target/
+**/frontend/dist/
+**/backend/.mvn/wrapper/maven-wrapper.jar
 
 # Hardhat generated files
 smart_contracts/artifacts/
 smart_contracts/cache/
+**/smart_contracts/artifacts/
+**/smart_contracts/cache/
 
 # Environment variables
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 .env.admin
+
+# Local editor JDK path (machine specific)
+/.vscode/settings.json

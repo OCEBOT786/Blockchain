@@ -13,15 +13,17 @@ contract SupplyChainOrder {
         address customerAddress;
         Status status;
         uint256 timestamp;
+        bytes32 metadataHash;
     }
 
     address public owner;
     uint256 public orderCount;
 
     mapping(uint256 => Order) public orders;
+    mapping(bytes32 => uint256) public orderIdByMetadataHash;
     mapping(address => bool) public authorizedOperators;
 
-    event OrderCreated(uint256 indexed orderId, address indexed customerAddress, uint256 timestamp);
+    event OrderCreated(uint256 indexed orderId, address indexed customerAddress, bytes32 metadataHash, uint256 timestamp);
     event OrderStatusUpdated(uint256 indexed orderId, Status newStatus, uint256 timestamp);
     event OperatorAuthorized(address indexed operator);
 
@@ -45,18 +47,22 @@ contract SupplyChainOrder {
         emit OperatorAuthorized(_operator);
     }
 
-    function createOrder(address _customer) external onlyOwner returns (uint256) {
+    function createOrder(address _customer, bytes32 _metadataHash) external onlyOwner returns (uint256) {
         require(_customer != address(0), "Invalid customer address");
+        require(_metadataHash != bytes32(0), "Invalid metadata hash");
+        require(orderIdByMetadataHash[_metadataHash] == 0, "Metadata hash already linked");
 
         orderCount++;
         orders[orderCount] = Order({
             orderId: orderCount,
             customerAddress: _customer,
             status: Status.OrderReceived,
-            timestamp: block.timestamp
+            timestamp: block.timestamp,
+            metadataHash: _metadataHash
         });
+        orderIdByMetadataHash[_metadataHash] = orderCount;
 
-        emit OrderCreated(orderCount, _customer, block.timestamp);
+        emit OrderCreated(orderCount, _customer, _metadataHash, block.timestamp);
         return orderCount;
     }
 
@@ -73,10 +79,11 @@ contract SupplyChainOrder {
         uint256 orderId,
         address customerAddress,
         Status status,
-        uint256 timestamp
+        uint256 timestamp,
+        bytes32 metadataHash
     ) {
         require(_orderId > 0 && _orderId <= orderCount, "Order does not exist");
         Order memory order = orders[_orderId];
-        return (order.orderId, order.customerAddress, order.status, order.timestamp);
+        return (order.orderId, order.customerAddress, order.status, order.timestamp, order.metadataHash);
     }
 }
