@@ -1,58 +1,69 @@
-import { expect } from "chai";
-import { ethers } from "hardhat";
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { network } from 'hardhat';
 
+const HASH = `0x${'11'.repeat(32)}`;
 
-describe("SupplyChainOrder", function () {
-  let supplyChainOrder;
-  let owner, operator, customer, unauthorized;
+async function deployFixture() {
+  const { ethers } = await network.create();
+  const [owner, operator, customer, unauthorized] = await ethers.getSigners();
+  const contract = await ethers.deployContract('SupplyChainOrder');
+  await contract.waitForDeployment();
+  return { contract, owner, operator, customer, unauthorized };
+}
 
-  beforeEach(async function () {
-    [owner, operator, customer, unauthorized] = await ethers.getSigners();
-
-    const SupplyChainOrder = await ethers.getContractFactory("SupplyChainOrder");
-    supplyChainOrder = await SupplyChainOrder.deploy();
-
-    if (supplyChainOrder.waitForDeployment) {
-      await supplyChainOrder.waitForDeployment();
-    } else {
-      await supplyChainOrder.deployed();
-    }
+describe('SupplyChainOrder', () => {
+  it('assigns the deployer as owner', async () => {
+    const { contract, owner } = await deployFixture();
+    assert.equal(await contract.owner(), owner.address);
   });
 
-  it("should deploy successfully and assign the correct owner", async function () {
-    expect(await supplyChainOrder.owner()).to.equal(owner.address);
+  it('stores and emits the immutable metadata hash on creation', async () => {
+    const { contract, owner, customer } = await deployFixture();
+    const tx = await contract.connect(owner).createOrder(customer.address, HASH);
+    const receipt = await tx.wait();
+    const created = receipt.logs
+      .map((log) => { try { return contract.interface.parseLog(log); } catch { return null; } })
+      .find((event) => event?.name === 'OrderCreated');
+
+    assert.equal(created.args.orderId, 1n);
+    assert.equal(created.args.customerAddress, customer.address);
+    assert.equal(created.args.metadataHash, HASH);
+    const order = await contract.getOrder(1);
+    assert.equal(order.status, 0n);
+    assert.equal(order.metadataHash, HASH);
+    assert.equal(await contract.orderIdByMetadataHash(HASH), 1n);
+    assert.ok(order.timestamp > 0n);
   });
 
-  it("should allow owner to create an order with OrderReceived status", async function () {
-    await supplyChainOrder.connect(owner).createOrder(customer.address);
-
-    const order = await supplyChainOrder.getOrder(1);
-    expect(order.orderId).to.equal(1);
-    expect(order.customerAddress).to.equal(customer.address);
-    expect(order.status).to.equal(0); // Status.OrderReceived
-    expect(order.timestamp).to.be.gt(0);
+  it('rejects an empty hash and creation by a non-owner', async () => {
+    const { contract, customer, unauthorized } = await deployFixture();
+    await assert.rejects(contract.createOrder(customer.address, `0x${'00'.repeat(32)}`));
+    await assert.rejects(contract.connect(unauthorized).createOrder(customer.address, HASH));
   });
 
-  it("should prevent unauthorized address from updating order status", async function () {
-    await supplyChainOrder.connect(owner).createOrder(customer.address);
-
-    await expect(
-      supplyChainOrder.connect(unauthorized).updateOrderStatus(1, 1) // 1: InTransit
-    ).to.be.revertedWith("Not an authorized operator");
+  it('rejects a status update by a non-operator', async () => {
+    const { contract, customer, unauthorized } = await deployFixture();
+    await (await contract.createOrder(customer.address, HASH)).wait();
+    await assert.rejects(contract.connect(unauthorized).updateOrderStatus(1, 1));
   });
 
-  it("should allow authorized operator to update status to InTransit and Delivered", async function () {
-    await supplyChainOrder.connect(owner).createOrder(customer.address);
-    await supplyChainOrder.connect(owner).authorizeOperator(operator.address);
+  it('prevents duplicate blockchain records for the same metadata hash', async () => {
+    const { contract, customer } = await deployFixture();
+    await (await contract.createOrder(customer.address, HASH)).wait();
+    await assert.rejects(contract.createOrder(customer.address, HASH));
+    assert.equal(await contract.orderCount(), 1n);
+  });
 
-    // Update to InTransit (1)
-    await supplyChainOrder.connect(operator).updateOrderStatus(1, 1);
-    let order = await supplyChainOrder.getOrder(1);
-    expect(order.status).to.equal(1);
-
-    // Update to Delivered (2)
-    await supplyChainOrder.connect(operator).updateOrderStatus(1, 2);
-    order = await supplyChainOrder.getOrder(1);
-    expect(order.status).to.equal(2);
+  it('allows an authorized operator to update status without changing the hash', async () => {
+    const { contract, operator, customer } = await deployFixture();
+    await (await contract.createOrder(customer.address, HASH)).wait();
+    await (await contract.authorizeOperator(operator.address)).wait();
+    await (await contract.connect(operator).updateOrderStatus(1, 1)).wait();
+    assert.equal((await contract.getOrder(1)).status, 1n);
+    await (await contract.connect(operator).updateOrderStatus(1, 2)).wait();
+    const order = await contract.getOrder(1);
+    assert.equal(order.status, 2n);
+    assert.equal(order.metadataHash, HASH);
   });
 });

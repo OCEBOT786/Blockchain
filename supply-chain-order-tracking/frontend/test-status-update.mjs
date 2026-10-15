@@ -22,7 +22,7 @@ const abi = [
   'function authorizedOperators(address) external view returns (bool)',
   'function orderCount() external view returns (uint256)',
   'function updateOrderStatus(uint256 _orderId, uint8 _newStatus) external',
-  'function getOrder(uint256 _orderId) external view returns (uint256 orderId, address customerAddress, uint8 status, uint256 timestamp)'
+  'function getOrder(uint256 _orderId) external view returns (uint256 orderId, address customerAddress, uint8 status, uint256 timestamp, bytes32 metadataHash)'
 ];
 
 const ownerContract = new ethers.Contract(
@@ -112,7 +112,8 @@ console.log({
   orderId: order.orderId.toString(),
   customerAddress: order.customerAddress,
   status: Number(order.status),
-  timestamp: order.timestamp.toString()
+  timestamp: order.timestamp.toString(),
+  metadataHash: order.metadataHash
 });
 
 if (Number(order.status) === 1) {
