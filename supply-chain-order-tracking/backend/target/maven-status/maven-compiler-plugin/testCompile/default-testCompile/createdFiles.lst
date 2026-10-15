@@ -1,7 +1,0 @@
-com\supplychain\service\OrderMetadataTest.class
-com\supplychain\service\OrderWorkflowTest.class
-com\supplychain\IsolatedWorkflowTest.class
-com\supplychain\BackendStartupTest.class
-com\supplychain\controller\OrderControllerTest.class
-com\supplychain\service\SupabaseServiceTest.class
-com\supplychain\service\LocalBlockchainTest.class
