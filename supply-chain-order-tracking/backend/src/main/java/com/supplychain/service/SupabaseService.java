@@ -8,8 +8,8 @@ import java.util.Map;
 @Service
 public class SupabaseService {
     // To be updated with details from Person 4
-    private final String SUPABASE_URL = "YOUR_SUPABASE_URL/rest/v1/orders";
-    private final String SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY";
+    private final String SUPABASE_URL = "https://hkhntvwhuauaqtiwdcgz.supabase.co";
+    private final String SUPABASE_KEY = "sb_publishable_gNeJf4lTlgzGLPTuPvUk3A_meKLxNpW";
     private final RestTemplate restTemplate = new RestTemplate();
 
     public void saveOrderMetadata(String orderId, Map<String, Object> metadata) {

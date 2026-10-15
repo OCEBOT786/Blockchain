@@ -20,9 +20,9 @@ public class OrderService {
     @Autowired
     private Web3j web3j;
 
-    // Use Account #0 or your Sepolia/Local relayer credentials
-    private final String PRIVATE_KEY = "YOUR_HARDHAT_OR_SEPOLIA_PRIVATE_KEY";
-    private final String CONTRACT_ADDRESS = "YOUR_DEPLOYED_CONTRACT_ADDRESS";
+    //Sepolia/Local relayer credentials
+    private final String PRIVATE_KEY = "cccd852ea856387fc50ffb6ea442bcb7baeae5e8cef22aa5357c85eacdc1d82c";
+    private final String CONTRACT_ADDRESS = "0x5EfB13B6C444bc412A500E1fFD2eE89cB12B3D59";
 
     private SupplyChainOrder getContract() {
         Credentials credentials = Credentials.create(PRIVATE_KEY);
