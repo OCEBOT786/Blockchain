@@ -1,413 +1,203 @@
-import { useEffect, useState } from "react";
-import { supabase } from "./lib/supabase";
-import "./Tracker.css";
+import { useCallback, useEffect, useState } from 'react';
+import { supabase } from './lib/supabase';
+import { ordersApi } from './lib/backend';
+import './Tracker.css';
 
-// same mock data as the html version — vendor portal + verify still run on
-// this until the backend / smart contract side is ready. real orders from
-// supabase get added on top of it (see loadRealOrders below)
-const initialOrders = {
-  "SC-10492": {
-    customer: "Alex Kim",
-    origin: "Hamilton, NZ",
-    destination: "Auckland CBD",
-    status: "Shipped",
-    storedHash: "a91f7c3e9b2d",
-    onchainHash: "a91f7c3e9b2d",
-    history: [
-      { status: "Order placed", time: "2026-09-28T09:14:00" },
-      { status: "Packed", time: "2026-09-29T14:02:00" },
-      { status: "Shipped", time: "2026-09-30T08:47:00" },
-    ],
-  },
-  "SC-10493": {
-    customer: "Priya Nair",
-    origin: "Wellington, NZ",
-    destination: "Christchurch",
-    status: "Delivered",
-    storedHash: "3b2e88d1f4a0",
-    onchainHash: "9c4de77201aa",
-    history: [
-      { status: "Order placed", time: "2026-09-25T10:05:00" },
-      { status: "Packed", time: "2026-09-25T16:40:00" },
-      { status: "Shipped", time: "2026-09-26T07:22:00" },
-      { status: "Delivered", time: "2026-09-27T11:58:00" },
-    ],
-  },
-};
+const STATUS = ['Order Received', 'In Transit', 'Delivered'];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const shortId = (id) => `SC-${id.slice(0, 8).toUpperCase()}`;
+const showError = (error) => error instanceof Error ? error.message : String(error);
 
-const STEPS = ["Order placed", "Packed", "Shipped", "Delivered"];
-
-function formatTime(t) {
-  const d = new Date(t);
-  return d.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function getTime(order, status) {
-  const entry = order.history.find((h) => h.status === status);
-  return entry ? formatTime(entry.time) : "";
-}
-
-// ---- supabase <-> tracker translation ----
-// the orders table doesn't have customer / origin / status columns, so:
-//  - customer + origin are saved in the "notes" column
-//  - destination is the "delivery_address" column
-//  - status isn't in the database (it'll come from the blockchain later),
-//    so a real order just shows "Order placed" for now
-// product_name and quantity are required by the database but the form
-// doesn't ask for them, so these placeholders are used until we decide what to do
-const PLACEHOLDER_PRODUCT = "General goods";
-const PLACEHOLDER_QUANTITY = 1;
-
-function displayId(uuid) {
-  return "SC-" + uuid.slice(0, 8).toUpperCase();
-}
-
-function notesFromForm(customer, origin) {
-  return "Customer: " + customer + "\nOrigin: " + origin;
-}
-
-function readNote(notes, key) {
-  const match = (notes || "").match(new RegExp("^" + key + ": (.*)$", "m"));
-  return match ? match[1] : "-";
-}
-
-function rowToOrder(row) {
-  return {
-    customer: readNote(row.notes, "Customer"),
-    origin: readNote(row.notes, "Origin"),
-    destination: row.delivery_address || "-",
-    status: "Order placed",
-    storedHash: "pending",
-    onchainHash: "pending",
-    history: [{ status: "Order placed", time: row.created_at }],
-  };
-}
-
-export default function Tracker() {
-  // in the html/js version this stuff lived in global `var`s and got pushed
-  // into the page by hand with document.getElementById(...).textContent = ...
-  // in react it's all "state" instead — you just update the state and the
-  // page re-renders itself to match, no manual DOM poking
-  const [orders, setOrders] = useState(initialOrders);
-  const [activeTab, setActiveTab] = useState("customer");
-  const [currentOrderId, setCurrentOrderId] = useState("SC-10492");
-
-  // customer tab - search box
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchInput, setSearchInput] = useState("");
-  const [searchErr, setSearchErr] = useState("");
-
-  // vendor tab
-  const [vendorId, setVendorId] = useState("SC-10492");
-  const [vendorStatus, setVendorStatus] = useState("Shipped");
-  const [vendorMsg, setVendorMsg] = useState("");
-
-  // place order tab
-  const [placeName, setPlaceName] = useState("");
-  const [placeOrigin, setPlaceOrigin] = useState("");
-  const [placeDest, setPlaceDest] = useState("");
-  const [placeMsg, setPlaceMsg] = useState("");
-
-  // verify tab
-  const [verifyId, setVerifyId] = useState("SC-10492");
+export default function Tracker({ session, profile }) {
+  const [tab, setTab] = useState('customer');
+  const [orders, setOrders] = useState([]);
+  const [selected, setSelected] = useState('');
+  const [search, setSearch] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
+  const [product, setProduct] = useState('');
+  const [description, setDescription] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [delivery, setDelivery] = useState('');
+  const [status, setStatus] = useState(1);
+  const [logisticsId, setLogisticsId] = useState('');
+  const [buyerWallet, setBuyerWallet] = useState('');
 
-  // load the logged-in user's real orders from supabase (newest first)
-  useEffect(() => {
-    let cancelled = false;
+  useEffect(() => { setBuyerWallet(profile?.wallet_address || ''); }, [profile?.wallet_address]);
 
-    supabase
-      .from("orders")
-      .select("id, delivery_address, notes, created_at")
-      .order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (cancelled || error || !data || data.length === 0) return;
-
-        const real = {};
-        data.forEach((row) => {
-          real[displayId(row.id)] = rowToOrder(row);
-        });
-        setOrders((old) => ({ ...old, ...real }));
-        setCurrentOrderId(displayId(data[0].id));
-      });
-
-    return () => {
-      cancelled = true;
-    };
+  const refresh = useCallback(async () => {
+    const rows = await ordersApi.list();
+    setOrders(rows);
+    setSelected((previous) => rows.some((row) => row.id === previous) ? previous : (rows[0]?.id || ''));
   }, []);
 
-  const currentOrder = orders[currentOrderId];
+  useEffect(() => {
+    if (!session) return;
+    let active = true;
+    refresh().catch((error) => { if (active) setMessage(showError(error)); });
+    const timer = setInterval(() => refresh().catch(() => {}), 10000);
+    return () => { active = false; clearInterval(timer); };
+  }, [session?.user?.id, refresh]);
 
-  function handleSearch() {
-    const id = searchInput.trim().toUpperCase();
-    if (!orders[id]) {
-      setSearchErr("couldn't find that order id");
-      return;
+  const current = orders.find((row) => row.id === selected);
+  const isBuyer = profile?.role === 'buyer';
+  const isLogistics = profile?.role === 'logistics_provider';
+
+  async function act(action, success) {
+    setLoading(true);
+    setMessage('');
+    try {
+      await action();
+      await refresh();
+      if (success) setMessage(success);
+    } catch (error) {
+      setMessage(showError(error));
+    } finally {
+      setLoading(false);
     }
-    setSearchErr("");
-    setCurrentOrderId(id);
-    setSearchOpen(false);
-    setSearchInput("");
   }
 
-  function handleUpdateStatus() {
-    const id = vendorId.trim().toUpperCase();
-    const order = orders[id];
-    if (!order) {
-      setVendorMsg("no order with that id exists yet");
-      return;
-    }
-
-    const alreadyLogged = getTime(order, vendorStatus) !== "";
-    const updated = {
-      ...order,
-      status: vendorStatus,
-      history: alreadyLogged
-        ? order.history
-        : [...order.history, { status: vendorStatus, time: new Date().toISOString() }],
-    };
-
-    setOrders({ ...orders, [id]: updated });
-    setVendorMsg("updated " + id + " to " + vendorStatus);
+  function selectOrder() {
+    const term = search.trim().toLowerCase();
+    const row = orders.find((item) => item.id.toLowerCase() === term || shortId(item.id).toLowerCase() === term);
+    if (row) { setSelected(row.id); setMessage(''); }
+    else setMessage('No accessible order matches that ID.');
   }
 
-  async function handlePlaceOrder() {
-    if (!placeName.trim() || !placeOrigin.trim() || !placeDest.trim()) {
-      setPlaceMsg("fill in all the fields first");
+  async function placeOrder() {
+    if (!isBuyer || !product.trim() || !Number.isSafeInteger(Number(quantity)) || Number(quantity) < 1) {
+      setMessage('Enter a product name and a positive whole quantity.');
       return;
     }
-
-    setPlaceMsg("placing order...");
-
-    const { data: userData } = await supabase.auth.getUser();
-    const user = userData?.user;
-    if (!user) {
-      setPlaceMsg("you need to be logged in to place an order");
-      return;
-    }
-
-    // save it in supabase (the database makes the id + created_at itself)
-    const { data: row, error } = await supabase
-      .from("orders")
-      .insert({
-        buyer_id: user.id,
-        product_name: PLACEHOLDER_PRODUCT,
-        quantity: PLACEHOLDER_QUANTITY,
-        delivery_address: placeDest.trim(),
-        notes: notesFromForm(placeName.trim(), placeOrigin.trim()),
-      })
-      .select("id, delivery_address, notes, created_at")
-      .single();
-
-    if (error) {
-      // only accounts with the buyer role are allowed to insert orders
-      setPlaceMsg("couldn't place the order: " + error.message);
-      return;
-    }
-
-    const id = displayId(row.id);
-    setOrders((old) => ({ ...old, [id]: rowToOrder(row) }));
-    setPlaceMsg("order placed, id is " + id);
-    setPlaceName("");
-    setPlaceOrigin("");
-    setPlaceDest("");
+    setLoading(true);
+    setMessage('');
+    try {
+      const { data: row, error } = await supabase.from('orders').insert({
+        buyer_id: session.user.id,
+        product_name: product.trim(),
+        product_description: description.trim() || null,
+        quantity: Number(quantity),
+        delivery_address: delivery.trim() || null,
+      }).select('id').single();
+      if (error) throw error;
+      setSelected(row.id);
+      setProduct(''); setDescription(''); setQuantity(1); setDelivery('');
+      try {
+        await ordersApi.link(row.id);
+        setMessage(`Order ${shortId(row.id)} linked to the blockchain.`);
+      } catch (linkError) {
+        setMessage(`Order saved as ${shortId(row.id)}, but blockchain linking needs a retry: ${showError(linkError)}`);
+      }
+      await refresh();
+    } catch (error) {
+      setMessage(showError(error));
+    } finally { setLoading(false); }
   }
 
-  function handleVerify() {
-    const id = verifyId.trim().toUpperCase();
-    const order = orders[id];
-    if (!order) {
-      setVerifyResult({ found: false, id });
-      return;
-    }
-    setVerifyResult({
-      found: true,
-      ok: order.storedHash === order.onchainHash,
-      storedHash: order.storedHash,
-      onchainHash: order.onchainHash,
-    });
+  async function verify() {
+    if (!current) return;
+    setLoading(true); setVerifyResult(null); setMessage('');
+    try { setVerifyResult(await ordersApi.verify(current.id)); }
+    catch (error) { setMessage(showError(error)); }
+    finally { setLoading(false); }
   }
 
-  const currentStepIdx = STEPS.indexOf(currentOrder.status);
+  async function assignLogistics() {
+    if (!current || !UUID.test(logisticsId.trim())) {
+      setMessage('Enter the logistics provider’s full profile UUID.');
+      return;
+    }
+    await act(async () => {
+      const { data, error } = await supabase.from('orders')
+        .update({ logistics_provider_id: logisticsId.trim() })
+        .eq('id', current.id).select('id').single();
+      if (error) throw error;
+      if (!data) throw new Error('The logistics assignment was not saved.');
+    }, 'Logistics provider assigned.');
+  }
 
-  return (
-    <div className="container">
-      <div className="header">
-        <h3 style={{ margin: 0 }}>Tracker</h3>
-        <div className="tabs">
-          <button
-            className={activeTab === "customer" ? "active" : ""}
-            onClick={() => setActiveTab("customer")}
-          >
-            Customer Tracking
-          </button>
-          <button
-            className={activeTab === "vendor" ? "active" : ""}
-            onClick={() => setActiveTab("vendor")}
-          >
-            Vendor Portal
-          </button>
-          <button
-            className={activeTab === "place" ? "active" : ""}
-            onClick={() => setActiveTab("place")}
-          >
-            Place Order
-          </button>
-          <button
-            className={activeTab === "verify" ? "active" : ""}
-            onClick={() => setActiveTab("verify")}
-          >
-            Verify
-          </button>
-        </div>
+  async function saveWallet() {
+    const wallet = buyerWallet.trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(wallet) || /^0x0{40}$/i.test(wallet)) {
+      setMessage('Enter a valid nonzero buyer wallet address.');
+      return;
+    }
+    await act(async () => {
+      const { data, error } = await supabase.from('profiles')
+        .update({ wallet_address: wallet }).eq('id', session.user.id).select('id').single();
+      if (error) throw error;
+      if (!data) throw new Error('Wallet address was not saved.');
+    }, 'Buyer wallet address saved.');
+  }
+
+  return <div className="container">
+    <div className="header">
+      <h3 style={{ margin: 0 }}>Tracker</h3>
+      <div className="tabs">
+        <button className={tab === 'customer' ? 'active' : ''} onClick={() => setTab('customer')}>Customer Tracking</button>
+        {isLogistics && <button className={tab === 'vendor' ? 'active' : ''} onClick={() => setTab('vendor')}>Logistics</button>}
+        {isBuyer && <button className={tab === 'place' ? 'active' : ''} onClick={() => setTab('place')}>Place Order</button>}
+        <button className={tab === 'verify' ? 'active' : ''} onClick={() => setTab('verify')}>Verify</button>
       </div>
-
-      {activeTab === "customer" && (
-        <div className="card">
-          <div className="order_row">
-            <div>
-              <p className="label">Order</p>
-              <h3 style={{ margin: 0 }}>#{currentOrderId}</h3>
-            </div>
-            <button className="trackbtn" onClick={() => setSearchOpen(!searchOpen)}>
-              Track another order
-            </button>
-          </div>
-
-          {searchOpen && (
-            <div className="searchrow">
-              <input
-                type="text"
-                placeholder="enter order id e.g. SC-10493"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-              />
-              <button onClick={handleSearch}>Go</button>
-            </div>
-          )}
-          {searchErr && <div className="errtext">{searchErr}</div>}
-
-          <div className="timeline">
-            <div className="fill" style={{ width: (currentStepIdx / 3) * 100 + "%" }} />
-            {STEPS.map((stepName, i) => {
-              const done = i <= currentStepIdx;
-              const here = i === currentStepIdx;
-              return (
-                <div key={stepName} className={"step" + (done ? " done" : "") + (here ? " here" : "")}>
-                  <div className="circle">{done ? "✓" : ""}</div>
-                  {stepName === "Order placed" ? "Placed" : stepName}
-                  <div className="steptime">{done ? getTime(currentOrder, stepName) : ""}</div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="bottominfo">
-            <div>
-              <p className="label">Origin</p>
-              <span>{currentOrder.origin}</span>
-            </div>
-            <div>
-              <p className="label">Destination</p>
-              <span>{currentOrder.destination}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === "vendor" && (
-        <div className="card">
-          <h4 style={{ marginTop: 0 }}>Update an order</h4>
-          <label>Order ID</label>
-          <input type="text" value={vendorId} onChange={(e) => setVendorId(e.target.value)} />
-
-          <label>New Status</label>
-          <select value={vendorStatus} onChange={(e) => setVendorStatus(e.target.value)}>
-            {STEPS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <div className="pill">Current status: {orders[vendorId.trim().toUpperCase()]?.status || "?"}</div>
-
-          <button type="button" className="btnmain" onClick={handleUpdateStatus}>
-            Update Status
-          </button>
-          <div className="note">{vendorMsg}</div>
-        </div>
-      )}
-
-      {activeTab === "place" && (
-        <div className="card">
-          <h4 style={{ marginTop: 0 }}>Place a new order</h4>
-          <label>Customer Name</label>
-          <input
-            type="text"
-            placeholder="e.g. Priya Nair"
-            value={placeName}
-            onChange={(e) => setPlaceName(e.target.value)}
-          />
-
-          <label>Origin</label>
-          <input
-            type="text"
-            placeholder="e.g. Hamilton, NZ"
-            value={placeOrigin}
-            onChange={(e) => setPlaceOrigin(e.target.value)}
-          />
-
-          <label>Destination</label>
-          <input
-            type="text"
-            placeholder="e.g. Auckland CBD"
-            value={placeDest}
-            onChange={(e) => setPlaceDest(e.target.value)}
-          />
-
-          <button type="button" className="btnmain" onClick={handlePlaceOrder}>
-            Place Order
-          </button>
-          <div className="note">{placeMsg}</div>
-        </div>
-      )}
-
-      {activeTab === "verify" && (
-        <div className="card">
-          <h4 style={{ marginTop: 0 }}>Verify an order</h4>
-          <p className="note" style={{ marginTop: 0 }}>
-            checks the order's off-chain data against the hash anchored on-chain, this is just
-            running on mock hashes for now until the smart contract side is hooked up
-          </p>
-          <label>Order ID</label>
-          <input type="text" value={verifyId} onChange={(e) => setVerifyId(e.target.value)} />
-          <button type="button" className="btnmain" onClick={handleVerify}>
-            Verify
-          </button>
-
-          {verifyResult && !verifyResult.found && (
-            <div className="verifybox bad">no order found with id {verifyResult.id}</div>
-          )}
-          {verifyResult && verifyResult.found && (
-            <div className={"verifybox" + (verifyResult.ok ? "" : " bad")}>
-              {verifyResult.ok ? "Verified ✓" : "Tampered ⚠"}
-              <br />
-              stored hash: <code>{verifyResult.storedHash}</code>
-              <br />
-              on-chain hash: <code>{verifyResult.onchainHash}</code>
-              <br />
-              {verifyResult.ok
-                ? "both match, this order's data hasn't been tampered with."
-                : "these don't match, the off-chain record has been changed since it was anchored."}
-            </div>
-          )}
-        </div>
-      )}
     </div>
-  );
+
+    {message && <div className="card" role="status">{message}</div>}
+    {tab !== 'place' && <div className="card">
+      <label>Accessible order</label>
+      <select aria-label="Accessible order" value={selected} onChange={(event) => { setSelected(event.target.value); setVerifyResult(null); }}>
+        {!orders.length && <option value="">No orders available</option>}
+        {orders.map((row) => <option key={row.id} value={row.id}>{shortId(row.id)} · {row.product_name}</option>)}
+      </select>
+      <div className="searchrow">
+        <input aria-label="Find order ID" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Full UUID or SC- ID" />
+        <button onClick={selectOrder}>Go</button>
+      </div>
+    </div>}
+
+    {tab === 'customer' && <div className="card">
+      {!current ? <p>No accessible orders yet.</p> : <>
+        <div className="order_row"><div><p className="label">Order</p><h3 style={{ margin: 0 }}>{shortId(current.id)}</h3></div><button className="trackbtn" onClick={() => act(async () => {}, 'Orders refreshed.')}>Refresh</button></div>
+        <p className="note">UUID: <code>{current.id}</code></p>
+        <div className="timeline"><div className="fill" style={{ width: current.onchain_status == null ? '0%' : `${current.onchain_status * 50}%` }} />
+          {STATUS.map((name, index) => <div key={name} className={`step${current.onchain_status >= index ? ' done' : ''}${current.onchain_status === index ? ' here' : ''}`}><div className="circle">{current.onchain_status >= index ? '✓' : ''}</div>{name}</div>)}
+        </div>
+        <div className="bottominfo"><div><p className="label">Product</p>{current.product_name} × {current.quantity}</div><div><p className="label">Delivery</p>{current.delivery_address || 'Not specified'}</div></div>
+        {current.chainError && <p className="errtext">Blockchain read failed: {current.chainError}</p>}
+        {current.blockchain_order_id ? <p className="note">Blockchain order: {current.blockchain_order_id}<br />Transaction: <code>{current.blockchain_tx_hash}</code><br />Contract: <code>{current.contract_address}</code></p>
+          : <><p className="note">This order is saved in Supabase but is not linked to the blockchain.</p>{isBuyer && <button className="btnmain" disabled={loading} onClick={() => act(() => ordersApi.link(current.id), 'Blockchain link confirmed.')}>Retry blockchain link</button>}</>}
+        {isBuyer && <><label>Assign logistics provider by profile UUID</label>
+          <input value={logisticsId} onChange={(event) => setLogisticsId(event.target.value)} placeholder={current.logistics_provider_id || 'Provider profile UUID'} />
+          <button className="trackbtn" disabled={loading} onClick={assignLogistics}>Assign provider</button></>}
+      </>}
+    </div>}
+
+    {tab === 'vendor' && isLogistics && <div className="card"><h4 style={{ marginTop: 0 }}>Update an assigned order</h4>
+      <p className="note">Your provider profile UUID: <code>{session.user.id}</code>. Share it with the buyer for assignment.</p>
+      <p className="note">Current status: {current?.onchain_status == null ? 'Not linked' : STATUS[current.onchain_status]}</p>
+      <label>New status</label><select value={status} onChange={(event) => setStatus(Number(event.target.value))}><option value={1}>In Transit</option><option value={2}>Delivered</option></select>
+      <button className="btnmain" disabled={loading || !current?.blockchain_order_id} onClick={() => act(() => ordersApi.updateStatus(current.id, status), 'On-chain status confirmed.')}>Update Status</button>
+    </div>}
+
+    {tab === 'place' && isBuyer && <div className="card"><h4 style={{ marginTop: 0 }}>Place a new order</h4>
+      <label>Buyer wallet address</label><input value={buyerWallet} onChange={(event) => setBuyerWallet(event.target.value)} placeholder="0x..." />
+      <button className="trackbtn" disabled={loading} onClick={saveWallet}>Save wallet address</button>
+      <p className="note">The backend reads your saved profile wallet when linking. This field is a public address only.</p>
+      <label>Product name</label><input value={product} onChange={(event) => setProduct(event.target.value)} placeholder="Coffee Beans" />
+      <label>Description (optional)</label><input value={description} onChange={(event) => setDescription(event.target.value)} />
+      <label>Quantity</label><input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} />
+      <label>Delivery address (optional)</label><input value={delivery} onChange={(event) => setDelivery(event.target.value)} />
+      <button className="btnmain" disabled={loading} onClick={placeOrder}>Place Order</button>
+    </div>}
+
+    {tab === 'verify' && <div className="card"><h4 style={{ marginTop: 0 }}>Verify an order</h4>
+      <p className="note">Compare this order's current Supabase metadata with the hash stored on the configured blockchain contract.</p>
+      <button className="btnmain" disabled={loading || !current} onClick={verify}>Verify</button>
+      {verifyResult && <div className={`verifybox${verifyResult.status === 'VERIFIED' ? '' : ' bad'}`} role="status">
+        <strong>{verifyResult.status}</strong><br />
+        {verifyResult.message || (verifyResult.status === 'NOT_LINKED' ? 'This order has no blockchain link.' : '')}
+        {verifyResult.currentHash && <>Current metadata hash: <code>{verifyResult.currentHash}</code><br />On-chain hash: <code>{verifyResult.onchainHash}</code></>}
+      </div>}
+    </div>}
+  </div>;
 }

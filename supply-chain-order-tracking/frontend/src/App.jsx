@@ -43,7 +43,7 @@ function App() {
     let cancelled = false;
     supabase
       .from("profiles")
-      .select("id, role, full_name, company_name")
+      .select("id, role, full_name, company_name, wallet_address")
       .eq("id", userId)
       .single()
       .then(({ data, error }) => {
@@ -98,7 +98,7 @@ function App() {
         </button>
       </div>
 
-      <Tracker />
+      <Tracker session={session} profile={profile} />
     </>
   );
 }

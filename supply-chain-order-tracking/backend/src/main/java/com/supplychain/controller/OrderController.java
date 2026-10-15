@@ -1,139 +1,86 @@
 package com.supplychain.controller;
 
-import com.supplychain.service.OrderService;
-import com.supplychain.service.SupabaseService;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.math.BigInteger;
-import java.util.HashMap;
+import com.supplychain.service.OrderWorkflow;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.HttpStatusCodeException;
 
 @RestController
 @RequestMapping("/api/orders")
-@CrossOrigin(origins = "*") // Allows React/Next.js frontend to call endpoints without CORS blocks
 public class OrderController {
+    private final OrderWorkflow workflow;
+    public OrderController(OrderWorkflow workflow) { this.workflow = workflow; }
 
-    @Autowired
-    private OrderService orderService;
-
-    @Autowired
-    private SupabaseService supabaseService;
-
-    // 1. PLACE ORDER TAB (Matches Place Order Screen: customerName, origin, destination)
-    @PostMapping("/create")
-    public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, String> payload) {
-        try {
-            String customerName = payload.get("customerName");
-            String origin = payload.get("origin");
-            String destination = payload.get("destination");
-
-            // Form an identifier for the order
-            String generatedOrderId = "SC-" + (10000 + (int)(Math.random() * 89999));
-
-            // Log on-chain via backend relayer
-            orderService.createOrderOnChain("0x0000000000000000000000000000000000000000");
-
-            // Save metadata off-chain to Supabase
-            Map<String, Object> dbRecord = new HashMap<>();
-            dbRecord.put("order_id", generatedOrderId);
-            dbRecord.put("customer_name", customerName);
-            dbRecord.put("origin", origin);
-            dbRecord.put("destination", destination);
-            dbRecord.put("status", "Placed");
-
-            // If Supabase credentials are wired, persist it:
-            // supabaseService.saveOrderMetadata(dbRecord);
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("orderId", generatedOrderId);
-            response.put("status", "Placed");
-            response.put("message", "Order successfully created and anchored on-chain");
-
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            Map<String, Object> err = new HashMap<>();
-            err.put("error", e.getMessage());
-            return ResponseEntity.internalServerError().body(err);
-        }
+    private static String token(String header) {
+        if (header == null || !header.startsWith("Bearer ") || header.length() <= 7)
+            throw new SecurityException("Supabase bearer token is required");
+        return header.substring(7);
     }
 
-    // 2. CUSTOMER TRACKING TAB (Matches Customer Tracking Screen)
-    @GetMapping("/{orderId}")
-    public ResponseEntity<Map<String, Object>> getOrder(@PathVariable String orderId) {
-        try {
-            // Retrieve details (origin, destination, status history)
-            Map<String, Object> orderDetails = new HashMap<>();
-            orderDetails.put("orderId", orderId);
-            orderDetails.put("origin", "Hamilton, NZ");
-            orderDetails.put("destination", "Auckland CBD");
-            orderDetails.put("status", "Shipped"); // Placed, Packed, Shipped, Delivered
-
-            return ResponseEntity.ok(orderDetails);
-        } catch (Exception e) {
-            Map<String, Object> err = new HashMap<>();
-            err.put("error", e.getMessage());
-            return ResponseEntity.internalServerError().body(err);
-        }
+    @GetMapping
+    public List<Map<String, Object>> list(@RequestHeader(value = "Authorization", required = false) String authorization) throws Exception {
+        return workflow.list(token(authorization));
     }
 
-    // 3. VENDOR PORTAL TAB (Matches Vendor Portal Status Update)
-    @PutMapping("/{orderId}/status")
-    public ResponseEntity<Map<String, Object>> updateStatus(
-            @PathVariable String orderId,
-            @RequestBody Map<String, String> payload) {
-        try {
-            String newStatus = payload.get("newStatus"); // "Placed", "Packed", "Shipped", "Delivered"
-
-            // Map string status to contract enum integer
-            BigInteger statusIndex = BigInteger.ZERO;
-            if ("Packed".equalsIgnoreCase(newStatus)) statusIndex = BigInteger.ONE;
-            else if ("Shipped".equalsIgnoreCase(newStatus)) statusIndex = BigInteger.valueOf(2);
-            else if ("Delivered".equalsIgnoreCase(newStatus)) statusIndex = BigInteger.valueOf(3);
-
-            // Clean numerical order ID for smart contract uint
-            String numericIdOnly = orderId.replaceAll("[^0-9]", "");
-            BigInteger chainOrderId = numericIdOnly.isEmpty() ? BigInteger.ONE : new BigInteger(numericIdOnly);
-
-            // Relayer signs and submits transaction on-chain
-            orderService.updateOrderStatusOnChain(chainOrderId, statusIndex);
-
-            Map<String, Object> res = new HashMap<>();
-            res.put("orderId", orderId);
-            res.put("status", newStatus);
-            res.put("message", "Status updated on blockchain via relayer");
-
-            return ResponseEntity.ok(res);
-        } catch (Exception e) {
-            Map<String, Object> err = new HashMap<>();
-            err.put("error", e.getMessage());
-            return ResponseEntity.internalServerError().body(err);
-        }
+    @GetMapping("/{id}")
+    public Map<String, Object> get(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                    @PathVariable UUID id) throws Exception {
+        return workflow.get(token(authorization), id);
     }
 
-    // 4. VERIFY TAB (Matches Verify Screen)
-    @GetMapping("/{orderId}/verify")
-    public ResponseEntity<Map<String, Object>> verifyOrder(@PathVariable String orderId) {
-        try {
-            // Example off-chain data hash calculation (e.g. from Supabase metadata)
-            String sampleOffChainData = orderId + "|Hamilton, NZ|Auckland CBD";
-            String savedHash = orderService.computeSha256(sampleOffChainData);
+    @PostMapping("/{id}/link")
+    public Map<String, Object> link(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                     @PathVariable UUID id) throws Exception {
+        return workflow.link(token(authorization), id);
+    }
 
-            // Fetch the anchored hash from the smart contract or return matched hash
-            String blockchainHash = savedHash;
+    @GetMapping("/{id}/verify")
+    public Map<String, Object> verify(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                       @PathVariable UUID id) {
+        return workflow.verify(token(authorization), id);
+    }
 
-            Map<String, Object> verificationResult = new HashMap<>();
-            verificationResult.put("orderId", orderId);
-            verificationResult.put("savedHash", savedHash);
-            verificationResult.put("blockchainHash", blockchainHash);
-            verificationResult.put("verified", savedHash.equals(blockchainHash));
+    @PutMapping("/{id}/status")
+    public Map<String, Object> update(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                       @PathVariable UUID id, @RequestBody Map<String, Integer> body) throws Exception {
+        Integer status = body.get("status");
+        if (status == null || (status != 1 && status != 2)) throw new IllegalArgumentException("Status must be 1 or 2");
+        return workflow.update(token(authorization), id, status);
+    }
 
-            return ResponseEntity.ok(verificationResult);
-        } catch (Exception e) {
-            Map<String, Object> err = new HashMap<>();
-            err.put("error", e.getMessage());
-            return ResponseEntity.internalServerError().body(err);
-        }
+    @ExceptionHandler(SecurityException.class)
+    public ResponseEntity<Map<String, String>> forbidden(SecurityException error) {
+        HttpStatus status = error.getMessage().contains("token") ? HttpStatus.UNAUTHORIZED : HttpStatus.FORBIDDEN;
+        return ResponseEntity.status(status).body(Map.of("error", error.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException error) {
+        return ResponseEntity.badRequest().body(Map.of("error", error.getMessage()));
+    }
+
+    @ExceptionHandler(HttpStatusCodeException.class)
+    public ResponseEntity<Map<String, String>> upstream(HttpStatusCodeException error) {
+        HttpStatus status = error.getStatusCode().value() == 401 ? HttpStatus.UNAUTHORIZED
+                : error.getStatusCode().value() == 403 ? HttpStatus.FORBIDDEN : HttpStatus.BAD_GATEWAY;
+        return ResponseEntity.status(status).body(Map.of("error", "Supabase request failed"));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, String>> failure(Exception error) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error",
+                "Order operation failed. Retry or check the server configuration."));
     }
 }

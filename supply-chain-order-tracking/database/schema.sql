@@ -89,6 +89,13 @@ create or replace function public.protect_order_update()
 returns trigger language plpgsql set search_path = ''
 as $$
 begin
+    if old.blockchain_order_id is not null and (
+        new.blockchain_order_id is distinct from old.blockchain_order_id
+        or new.blockchain_tx_hash is distinct from old.blockchain_tx_hash
+        or new.contract_address is distinct from old.contract_address
+    ) then
+        raise exception 'an existing blockchain link cannot be changed';
+    end if;
     if (old.blockchain_order_id is not null or new.blockchain_order_id is not null) and (
         new.id is distinct from old.id
         or new.buyer_id is distinct from old.buyer_id
@@ -100,6 +107,14 @@ begin
         raise exception 'linked order metadata cannot be changed';
     end if;
     if auth.uid() is not null then
+        if (
+            new.product_name is distinct from old.product_name
+            or new.product_description is distinct from old.product_description
+            or new.quantity is distinct from old.quantity
+            or new.delivery_address is distinct from old.delivery_address
+        ) and auth.uid() is distinct from old.buyer_id then
+            raise exception 'only the buyer can change order metadata';
+        end if;
         if new.buyer_id is distinct from old.buyer_id then
             raise exception 'buyer_id cannot be changed';
         end if;
